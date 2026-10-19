@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Look Comparison</title>
+  <style>
+    :root { --bg: #1b1a18; --fg: #f3efe7; --muted: #b9b2a5; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; }
+    figure { margin: 0; }
+    img { width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; display: block; }
+    figcaption { color: var(--muted); padding: 4px 2px; }
+  </style>
+</head>
+<body>
+  <!-- Usage: /compare/?ref=ref_beach_hill.png&game=game_beach_hill.jpg -->
+  <div class="row">
+    <figure><img id="ref" alt="Reference" /><figcaption>Reference</figcaption></figure>
+    <figure><img id="game" alt="Game" /><figcaption>Game</figcaption></figure>
+  </div>
+  <script>
+    const q = new URLSearchParams(location.search);
+    document.getElementById('ref').src = q.get('ref') || 'ref_beach_hill.png';
+    document.getElementById('game').src = (q.get('game') || 'game_beach_hill.jpg') + '?v=' + Date.now();
+  </script>
+</body>
+</html>

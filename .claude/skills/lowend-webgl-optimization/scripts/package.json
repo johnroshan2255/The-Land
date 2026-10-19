@@ -1,0 +1,15 @@
+{
+  "name": "lowend-webgl-lod-tools",
+  "private": true,
+  "type": "module",
+  "description": "LOD and compression tools for the lowend-webgl-optimization skill",
+  "scripts": {
+    "lods": "node make-lods.mjs"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "^4.1.0",
+    "@gltf-transform/extensions": "^4.1.0",
+    "@gltf-transform/functions": "^4.1.0",
+    "meshoptimizer": "^0.22.0"
+  }
+}

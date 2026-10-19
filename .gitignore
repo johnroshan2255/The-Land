@@ -1,0 +1,13 @@
+# dependencies / build output
+node_modules/
+game/dist/
+
+# copied into the game by game/scripts/sync-assets.mjs before dev/build (sources live in models/)
+game/public/models/
+game/public/draco/
+
+# Blender autosave backups
+*.blend1
+
+# local Claude Code settings
+.claude/settings.local.json
