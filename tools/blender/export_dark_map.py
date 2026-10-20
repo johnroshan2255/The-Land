@@ -9,6 +9,8 @@
 #   biome.bin     Uint8 grid M x M x 2: desert weight (desert + beach), snow weight, 0..255
 #   map.json      grid metadata, roads (three.js x / z, heights, half widths, bridge flags), spawn, water level
 #   props.json    copy of the game's placements (three.js coordinates)
+#   props.glb     the set-piece models (camps, stunt park, cabins, ramps, bridges...; Draco), one node per prop type
+#   bruno/        Bruno Simon's lanterns, pole lights, benches, crates, bricks + palette (MIT, models/bruno)
 # Coordinates are three.js world metres (x = Blender x, z = -Blender y); heights are the game's (sea level 0). Dark's
 # water sits at -6, so map.json carries "heightOffset": -6 for the loader to add.
 import json, os, shutil, struct
@@ -65,6 +67,11 @@ def export_dark_map(out):
     with open(f"{out}/map.json", "w") as fh:
         json.dump(meta, fh, separators=(",", ":"))
     shutil.copy(f"{OUT_DIR}/props.json", f"{out}/props.json")
+    shutil.copy(f"{OUT_DIR}/props.glb", f"{out}/props.glb")
+    bruno = os.path.join(os.path.dirname(os.path.dirname(OUT_DIR)), "bruno")
+    os.makedirs(f"{out}/bruno", exist_ok=True)
+    for f in ("lanterns.glb", "poleLights.glb", "benches.glb", "explosiveCrates.glb", "bricks.glb", "palette.png", "LICENSE.md"):
+        shutil.copy(f"{bruno}/{f}", f"{out}/bruno/{f}")
     print(f"terrain: dark map {N}x{N} heights [{lo:.1f}, {hi:.1f}] m, {len(out_roads)} roads, {len(BRIDGES)} bridges -> {out}", flush=True)
 
 
