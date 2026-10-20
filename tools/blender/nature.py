@@ -170,6 +170,8 @@ NATURE = [
 if globals().get("MODE") == "preview":
     preview([b for _, b, _ in NATURE], globals().get("PREVIEW_PATH"), lod=int(globals().get("LOD", "0")), cols=7)
     result = {"preview": "written"}
+elif globals().get("MODE") == "library":   # only define the builders (island_chunks.py places them)
+    pass
 else:
     for name, build, lods in NATURE:
         make_asset("nature", name, build, lods=lods)

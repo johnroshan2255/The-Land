@@ -26,6 +26,11 @@ export function groundColorAt(x: number, z: number, out: THREE.Color) {
   return true;
 }
 
+/** Frozen lake / ponds read as pale cyan on the map. */
+export function isIce(c: THREE.Color) {
+  return c.b > 0.6 && c.g > 0.6 && c.r < c.g * 0.85;
+}
+
 /** Grass reads as green-dominant on the map. */
 export function isGrass(c: THREE.Color) {
   return c.g > c.r * 1.08 && c.g > c.b * 1.15;

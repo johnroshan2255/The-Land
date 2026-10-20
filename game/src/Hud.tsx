@@ -4,19 +4,38 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { HALF, telemetry } from './state';
 import { setControl, useControlsSnapshot, type Control } from './controls';
 import type { Tier } from './vendor/QualityManager';
+import { TouchControls } from './TouchControls';
 
 const MAP = '/models/terrain/map.png';
+const TOUCH = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;   // phone / tablet
+
+/** Fullscreen + landscape lock (mobile Chrome allows both only from a user tap). */
+function goFullscreen() {
+  const el = document.documentElement;
+  if (document.fullscreenElement || !el.requestFullscreen) return;
+  el.requestFullscreen({ navigationUI: 'hide' })
+    .then(() => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.('landscape'))
+    .catch(() => {});
+}
 
 export function Hud({ tier }: { tier: Tier }) {
   const [bigMap, setBigMap] = useState(false);
   const [clock, setClock] = useState('');
   const [readout, setReadout] = useState('');
+  const [full, setFull] = useState(false);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.code === 'KeyM') setBigMap((b) => !b);
       if (e.code === 'Escape') setBigMap(false);
     };
     window.addEventListener('keydown', key);
+    // phones: the first tap anywhere goes fullscreen (browsers only allow it from a gesture)
+    const firstTap = () => {
+      if (TOUCH) goFullscreen();
+    };
+    window.addEventListener('pointerdown', firstTap, { once: true });
+    const fs = () => setFull(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', fs);
     const id = setInterval(() => {
       const h = Math.floor(telemetry.timeOfDay);
       const m = Math.floor((telemetry.timeOfDay - h) * 60);
@@ -26,26 +45,31 @@ export function Hud({ tier }: { tier: Tier }) {
     }, 200);
     return () => {
       window.removeEventListener('keydown', key);
+      window.removeEventListener('pointerdown', firstTap);
+      document.removeEventListener('fullscreenchange', fs);
       clearInterval(id);
     };
   }, [tier]);
 
   return (
     <>
-      <div style={info}>
+      <div style={TOUCH ? { ...info, fontSize: 11, padding: '6px 10px' } : info}>
         <b>Island Drive</b> · {clock}
-        <br />W / S drive · A / D steer · Space brake · R reset · drag mouse to look, wheel to zoom · M map · T fast time
+        {!TOUCH && <><br />W / S drive · A / D steer · Space brake · R reset · drag mouse to look, wheel to zoom · M map · T fast time</>}
         <br />
         {readout}
       </div>
-      <MapView size={190} style={{ position: 'absolute', right: 16, top: 16, cursor: 'pointer' }} onClick={() => setBigMap(true)} />
+      {!full && (
+        <div style={fsButton} onClick={(e) => { e.stopPropagation(); goFullscreen(); }}>⛶ Fullscreen</div>
+      )}
+      <MapView size={TOUCH ? 110 : 190} style={{ position: 'absolute', right: 16, top: 16, cursor: 'pointer' }} onClick={() => setBigMap(true)} />
       {bigMap && (
         <div style={overlay} onClick={() => setBigMap(false)}>
           <MapView size={Math.min(window.innerWidth, window.innerHeight) * 0.86} style={{}} />
           <div style={{ position: 'absolute', bottom: 18, color: '#fff', font: '14px system-ui, sans-serif' }}>Click anywhere or press M / Esc to close</div>
         </div>
       )}
-      <WasdPad />
+      {TOUCH ? <TouchControls /> : <WasdPad />}
     </>
   );
 }
@@ -72,7 +96,10 @@ function MapView({ size, style, onClick }: { size: number; style: CSSProperties;
   );
 }
 
-const PAD: [Control, string, number, number][] = [['fwd', 'W', 1, 0], ['left', 'A', 0, 1], ['back', 'S', 1, 1], ['right', 'D', 2, 1]];
+// reset (flip back on the wheels) and brake are on the pad too, for phones without a keyboard
+const PAD: [Control, string, number, number][] = [
+  ['reset', '↺', 0, 0], ['fwd', 'W', 1, 0], ['brake', '■', 2, 0], ['left', 'A', 0, 1], ['back', 'S', 1, 1], ['right', 'D', 2, 1],
+];
 
 // On-screen WASD: lights up with the keyboard, and can be pressed with mouse or touch.
 function WasdPad() {
@@ -101,6 +128,10 @@ function WasdPad() {
 const info: CSSProperties = {
   position: 'absolute', left: 16, top: 16, padding: '10px 14px', borderRadius: 10, maxWidth: 'calc(100vw - 260px)',
   background: 'rgba(40, 30, 20, 0.55)', color: '#fff', font: '13px/1.6 system-ui, sans-serif', pointerEvents: 'none',
+};
+const fsButton: CSSProperties = {
+  position: 'absolute', left: '50%', top: 16, transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: 10,
+  background: 'rgba(40, 30, 20, 0.7)', color: '#fff', font: '600 14px system-ui, sans-serif', cursor: 'pointer',
 };
 const overlay: CSSProperties = {
   position: 'absolute', inset: 0, background: 'rgba(10, 12, 20, 0.6)', display: 'grid', placeItems: 'center', cursor: 'pointer',

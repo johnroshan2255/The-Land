@@ -310,6 +310,8 @@ STRUCTURES = [
 if globals().get("MODE") == "preview":
     preview([s[2] for s in STRUCTURES], globals().get("PREVIEW_PATH"), lod=int(globals().get("LOD", "0")), cols=4)
     result = {"preview": "written"}
+elif globals().get("MODE") == "library":   # only define the builders (island_chunks.py places them)
+    pass
 else:
     for category, name, build, lods, col in STRUCTURES:
         make_asset(category, name, build, lods=lods, col=col)

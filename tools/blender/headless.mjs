@@ -5,7 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const BLENDER = process.env.BLENDER_EXE ?? 'C:/Program Files/Blender Foundation/Blender 5.2/blender.exe';
+const BLENDER = process.env.BLENDER_EXE ?? (process.platform === 'darwin'
+  ? '/Applications/Blender.app/Contents/MacOS/Blender'
+  : 'C:/Program Files/Blender Foundation/Blender 5.2/blender.exe');
 const args = process.argv.slice(2);
 const header = args.filter((a) => a.includes('=') && !a.endsWith('.py')).map((kv) => {
   const i = kv.indexOf('=');

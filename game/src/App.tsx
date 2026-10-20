@@ -1,5 +1,6 @@
 import { Suspense, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
+import './toonShading';   // patches the Lambert shader: must run before any material compiles
 import { Canvas, addAfterEffect, addEffect, useFrame, useThree } from '@react-three/fiber';
 import { Physics } from '@react-three/rapier';
 import { World } from './World';
@@ -16,7 +17,6 @@ export function App() {
   return (
     <>
       <Canvas
-        shadows={PRESET.shadows === 'directional' ? 'percentage' : false}
         frameloop={PRESET.targetFps < 60 ? 'never' : 'always'}
         dpr={Math.min(window.devicePixelRatio, PRESET.maxPixelRatio)}
         gl={{ antialias: PRESET.antialias, powerPreference: 'high-performance', stencil: false, alpha: false }}

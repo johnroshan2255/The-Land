@@ -1,7 +1,7 @@
 export type Tier = 'low' | 'medium' | 'high';
 export interface Preset {
   tier: Tier; targetFps: number; minPixelRatio: number; maxPixelRatio: number; antialias: boolean;
-  shadows: 'blob' | 'directional'; shadowMapSize: number; chunkRadius: number; fogFar: number; treeDistance: number;
+  shadowTexSize: number; propDensity: number; chunkRadius: number; fogFar: number; treeDistance: number;
   propDistance: number; smokePuffs: number; bots: number; carLodDistances: number[]; lodScale: number;
 }
 export const PRESETS: Record<Tier, Preset>;

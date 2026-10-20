@@ -1,5 +1,8 @@
 // Vendored from .claude/skills/lowend-webgl-optimization/scripts/runtime/QualityManager.js
-// (project tweak: medium/high fogFar 600/900 so the 2.4 km island reads as a vista).
+// (project tweaks: medium/high fogFar 600/900 so the 2.4 km island reads as a vista; every tier targets 60 fps and
+// uses fake shadows - a baked prop-shadow texture on the terrain + a shadow image under the car - instead of shadow
+// maps, which re-render the scene from the sun every frame; shadowTexSize is that baked texture's resolution;
+// propDensity < 1 thins the dense forest / grass props on the low tier to keep old phones under ~150k triangles).
 // Device tier detection, quality presets and adaptive pixel ratio for low-end WebGL.
 //
 //   const quality = await QualityManager.create(renderer);
@@ -10,18 +13,18 @@
 
 export const PRESETS = {
   low: {
-    tier: 'low', targetFps: 30, minPixelRatio: 0.6, maxPixelRatio: 1.0, antialias: false,
-    shadows: 'blob', shadowMapSize: 0, chunkRadius: 1, fogFar: 350, treeDistance: 200,
+    tier: 'low', targetFps: 60, minPixelRatio: 0.5, maxPixelRatio: 1.0, antialias: false,
+    shadowTexSize: 2048, propDensity: 0.55, chunkRadius: 1, fogFar: 350, treeDistance: 200,
     propDistance: 80, smokePuffs: 20, bots: 3, carLodDistances: [0, 40, 150], lodScale: 0.6,
   },
   medium: {
     tier: 'medium', targetFps: 60, minPixelRatio: 0.85, maxPixelRatio: 1.25, antialias: false,
-    shadows: 'directional', shadowMapSize: 1024, chunkRadius: 1, fogFar: 600, treeDistance: 300,
+    shadowTexSize: 4096, propDensity: 1, chunkRadius: 1, fogFar: 600, treeDistance: 300,
     propDistance: 120, smokePuffs: 40, bots: 6, carLodDistances: [0, 80, 300], lodScale: 1,
   },
   high: {
     tier: 'high', targetFps: 60, minPixelRatio: 1.0, maxPixelRatio: 2.0, antialias: true,
-    shadows: 'directional', shadowMapSize: 2048, chunkRadius: 2, fogFar: 900, treeDistance: 450,
+    shadowTexSize: 4096, propDensity: 1, chunkRadius: 2, fogFar: 900, treeDistance: 450,
     propDistance: 200, smokePuffs: 60, bots: 10, carLodDistances: [0, 120, 400], lodScale: 1.4,
   },
 };
@@ -55,7 +58,9 @@ export function tierFromRendererString(name, isMobile) {
   if (mali) return Number(mali[1]) >= 710 ? 'medium' : 'low';
   if (/intel.*(hd|uhd) graphics/i.test(name)) return 'low';
   if (/intel.*(iris|xe)|radeon.*(vega|graphics)/i.test(name)) return 'medium';
-  if (/apple|nvidia|geforce|rtx|radeon rx|arc/i.test(name)) return 'high';
+  // iOS reports every iPhone as "Apple GPU", so an old iPhone can't be told from a new one: cap phones at medium
+  if (/apple/i.test(name)) return isMobile ? 'medium' : 'high';
+  if (/nvidia|geforce|rtx|radeon rx|arc/i.test(name)) return 'high';
   return isMobile ? 'low' : 'medium';
 }
 

@@ -1,6 +1,6 @@
-// Day/night cycle: one directional light (sun by day, moon by night) that follows the car with a tight shadow frustum,
-// a hemisphere light, a cheap gradient sky dome and fog matched to the horizon (skill: 1 hemi + 1 directional,
-// sky = MeshBasic-style dome with fog off and depthWrite off, fog color = horizon color).
+// Day/night cycle: one directional light (sun by day, moon by night), a hemisphere light, a cheap gradient sky dome and
+// fog matched to the horizon (skill: 1 hemi + 1 directional, sky = MeshBasic-style dome with fog off and depthWrite off,
+// fog color = horizon color). No shadow maps: `sun` below drives the fake shadows (baked terrain texture, car image).
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
@@ -8,14 +8,19 @@ import { PRESET, telemetry } from './state';
 
 export const DAY_SECONDS = 720;   // one full day in real seconds at normal speed
 
+/** Light direction (unit vector toward the sun/moon) and how dark fake shadows should be right now (0..1). */
+export const sun = { x: 0, y: 1, z: 0, shadow: 0.8 };
+
 // Palette keyed by sun elevation (-1..1), tuned to the warm golden-hour reference shots.
-type Key = { e: number; horizon: string; zenith: string; hemiSky: string; hemiGround: string; sun: string; sunI: number; hemiI: number };
+type Key = { e: number; horizon: string; zenith: string; hemiSky: string; hemiGround: string; sun: string; sunI: number; hemiI: number; shadow: number };
 const KEYS: Key[] = [
-  { e: -0.35, horizon: '#1d2a50', zenith: '#0a1029', hemiSky: '#5a72b4', hemiGround: '#232a3a', sun: '#a9c0ff', sunI: 0.75, hemiI: 0.75 },   // night
-  { e: -0.05, horizon: '#7a5f8c', zenith: '#2c3566', hemiSky: '#8a7bb0', hemiGround: '#3e2f36', sun: '#d0a8ff', sunI: 0.25, hemiI: 0.6 },    // dusk
-  { e: 0.08, horizon: '#ffcf9a', zenith: '#7db3e3', hemiSky: '#ffe2bd', hemiGround: '#b8956a', sun: '#ffc98a', sunI: 2.2, hemiI: 1.0 },      // sunrise / sunset
-  { e: 0.35, horizon: '#f8e2bc', zenith: '#86c1ee', hemiSky: '#fff3e0', hemiGround: '#c8ad85', sun: '#ffe6c0', sunI: 2.6, hemiI: 1.15 },     // golden afternoon
-  { e: 1.0, horizon: '#e6eef3', zenith: '#78b6ea', hemiSky: '#f3f8ff', hemiGround: '#c0aa88', sun: '#fff3de', sunI: 2.7, hemiI: 1.1 },       // noon
+  // Toon shading (toonShading.ts, after Bruno Simon's folio-2025): `sun` x sunI is the lit tint, `hemiSky` x hemiI the
+  // SHADOW tint (the colour a surface turns as it faces away from the sun). Intensities are x PI (three's Lambert / PI).
+  { e: -0.35, horizon: '#1d2a50', zenith: '#0a1029', hemiSky: '#3a1ee0', hemiGround: '#000000', sun: '#6a78ff', sunI: 1.5 * Math.PI, hemiI: 0.55 * Math.PI, shadow: 0.35 },   // night
+  { e: -0.05, horizon: '#7a5f8c', zenith: '#2c3566', hemiSky: '#5a14b0', hemiGround: '#000000', sun: '#ff8a8a', sunI: 1.0 * Math.PI, hemiI: 0.8 * Math.PI, shadow: 0.3 },    // dusk
+  { e: 0.08, horizon: '#ffb98a', zenith: '#4f9be8', hemiSky: '#a8448c', hemiGround: '#000000', sun: '#ffb08a', sunI: 1.2 * Math.PI, hemiI: Math.PI, shadow: 0.75 },      // sunrise / sunset
+  { e: 0.35, horizon: '#ffd9a8', zenith: '#3f96ee', hemiSky: '#7b5cff', hemiGround: '#000000', sun: '#ffd8c6', sunI: 1.2 * Math.PI, hemiI: Math.PI, shadow: 0.85 },     // golden afternoon
+  { e: 1.0, horizon: '#cfe6f6', zenith: '#3a90ec', hemiSky: '#8068ff', hemiGround: '#000000', sun: '#ffeadc', sunI: 1.25 * Math.PI, hemiI: Math.PI, shadow: 0.88 },       // noon
 ];
 
 const ca = new THREE.Color();
@@ -30,7 +35,7 @@ function color(elev: number, f: 'horizon' | 'zenith' | 'hemiSky' | 'hemiGround' 
   const { a, b, t } = segment(elev);
   return out.copy(ca.set(a[f])).lerp(cb.set(b[f]), t);
 }
-function num(elev: number, f: 'sunI' | 'hemiI') {
+function num(elev: number, f: 'sunI' | 'hemiI' | 'shadow') {
   const { a, b, t } = segment(elev);
   return a[f] + (b[f] - a[f]) * t;
 }
@@ -91,13 +96,15 @@ export function DayNight() {
     skyMat.uniforms.uHorizon.value.copy(horizon);
     color(elev, 'zenith', skyMat.uniforms.uZenith.value);
     if (dome.current) dome.current.position.copy(camera.position);
+    sun.x = dir.x;
+    sun.y = dir.y;
+    sun.z = dir.z;
+    sun.shadow = num(elev, 'shadow');
     const l = light.current, h = hemi.current;
     if (l) {
       color(elev, 'sun', l.color);
       l.intensity = num(elev, 'sunI');
-      l.position.set(telemetry.x + dir.x * 120, telemetry.y + dir.y * 120, telemetry.z + dir.z * 120);
-      l.target.position.set(telemetry.x, telemetry.y, telemetry.z);
-      l.target.updateMatrixWorld();
+      l.position.copy(dir);   // a directional light only needs a direction (target stays at the origin)
     }
     if (h) {
       color(elev, 'hemiSky', h.color);
@@ -106,26 +113,15 @@ export function DayNight() {
     }
   });
 
-  const size = PRESET.shadowMapSize || 512;
   return (
     <>
-      <mesh ref={dome} material={skyMat} renderOrder={-1} frustumCulled={false}>
-        <sphereGeometry args={[PRESET.fogFar * 0.9, 24, 12]} />
+      {/* drawn after the opaque world (renderOrder 1) and depth-tested, so it only shades the pixels that are actually sky
+          instead of the whole screen; radius just past the fog end, inside camera.far */}
+      <mesh ref={dome} material={skyMat} renderOrder={1} frustumCulled={false}>
+        <sphereGeometry args={[PRESET.fogFar + 30, 24, 12]} />
       </mesh>
       <hemisphereLight ref={hemi} />
-      <directionalLight
-        ref={light}
-        castShadow={PRESET.shadows === 'directional'}
-        shadow-mapSize={[size, size]}
-        shadow-camera-left={-45}
-        shadow-camera-right={45}
-        shadow-camera-top={45}
-        shadow-camera-bottom={-45}
-        shadow-camera-near={1}
-        shadow-camera-far={300}
-        shadow-bias={-0.0006}
-        shadow-normalBias={0.04}
-      />
+      <directionalLight ref={light} />
     </>
   );
 }

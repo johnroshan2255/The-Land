@@ -4,21 +4,30 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import { CuboidCollider, RigidBody, useBeforePhysicsStep, useRapier, type RapierRigidBody } from '@react-three/rapier';
 import type { Collider, DynamicRayCastVehicleController } from '@dimforge/rapier3d-compat';
-import { DRACO, PRESET, telemetry } from './state';
-import { controls, setControl, useKeyboardControls } from './controls';
+import { DRACO, telemetry } from './state';
+import { analog, controls, setControl, useKeyboardControls } from './controls';
 import { emitPuff } from './Smoke';
-import { isNight } from './DayNight';
-import { groundColorAt, isAsphalt, isGrass } from './groundColor';
+import { isNight, sun } from './DayNight';
+import { groundColorAt, isAsphalt, isGrass, isIce } from './groundColor';
 
 // Spawn on the forest stretch of the road loop (Blender (450, -330) -> three.js (450, y, 330)), facing along the road.
 const SPAWN = new THREE.Vector3(450, 0, 330);
 const SPAWN_YAW = Math.atan2(350, -230);   // local -Z (car forward) toward road direction (-350, 0, +230)
 
 const WHEELS = ['wheel_FL', 'wheel_FR', 'wheel_RL', 'wheel_RR'] as const;
-const REST = 0.45;           // suspension rest length (m)
+// Suspension rays start at the chassis box centre, not just above its floor: when the box touched the ground (bump,
+// landing, side slope) the old origin (4 cm above the box bottom) ended up under the terrain, the rays missed, and the
+// car lay on its belly with the wheels sunk into the ground. Rest length is measured from here to the hub.
+const SUSP_TOP = 1.5;
 const RADIUS = 0.64;
+const TRAVEL = 0.4;          // max suspension travel either side of rest (m)
+// Chassis mass: box inertia (150 kg, 1.9 x 0.9 x 3.9 m) but the centre of mass near axle height. With it at the
+// box centre (1.5 m up on a 2.08 m track) the jeep rolled over in ordinary turns and ended up stuck on its roof.
+// centerOfMass is collider-local: the box sits at y = 1.5, so -0.7 puts the CoM at y = 0.8 on the body.
+const MASS = { mass: 150, centerOfMass: { x: 0, y: -0.7, z: 0 }, principalAngularInertia: { x: 200, y: 235, z: 55 }, angularInertiaLocalFrame: { x: 0, y: 0, z: 0, w: 1 } };
 const ENGINE = 260;          // per driven wheel
 const BRAKE = 6;
+const GRIP = 3, ICE_GRIP = 0.7;   // wheel friction slip on ground / on the frozen lake and ponds (drift on ice)
 const MAX_STEER = 0.55;
 
 // chase camera
@@ -36,6 +45,94 @@ const SMOKE_COL = new THREE.Color('#eceae6');
 const GROUND = new THREE.Color();
 const DUST = new THREE.Color();
 const WHITE = new THREE.Color('#ffffff');
+const ICE_COL = new THREE.Color();
+const SH = { f: new THREE.Vector3(), b: new THREE.Vector3(), l: new THREE.Vector3(), r: new THREE.Vector3(), x: new THREE.Vector3(), n: new THREE.Vector3(), z: new THREE.Vector3(), m: new THREE.Matrix4() };
+
+/**
+ * The car's fake shadow (an image on a plane instead of a shadow map): the jeep's own top-down silhouette, body + wheels
+ * at rest, rasterised once into a small canvas and blurred twice - a tight blur for the shadow itself plus a wide one for
+ * the soft contact darkening around it. Returns the texture and the plane it covers in car space (x, z centre and size).
+ */
+function makeCarShadow(chassis: THREE.Object3D, wheels: { obj: THREE.Object3D; hub: THREE.Vector3 }[]) {
+  const tris: number[] = [];   // x, z pairs, 3 per triangle, car space
+  const v = new THREE.Vector3();
+  const rel = new THREE.Matrix4();
+  const add = (root: THREE.Object3D, offset: THREE.Vector3) => {
+    root.updateMatrixWorld(true);
+    const inv = root.matrixWorld.clone().invert();
+    root.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      rel.multiplyMatrices(inv, mesh.matrixWorld);
+      const pos = mesh.geometry.getAttribute('position');
+      const idx = mesh.geometry.index;
+      const n = idx ? idx.count : pos.count;
+      for (let k = 0; k < n; k++) {
+        v.fromBufferAttribute(pos, idx ? idx.getX(k) : k).applyMatrix4(rel).add(offset);
+        tris.push(v.x, v.z);
+      }
+    });
+  };
+  add(chassis, new THREE.Vector3());
+  for (const w of wheels) add(w.obj, w.hub);
+
+  const PAD = 0.6;   // metres of room for the blur
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (let k = 0; k < tris.length; k += 2) {
+    x0 = Math.min(x0, tris[k]); x1 = Math.max(x1, tris[k]);
+    z0 = Math.min(z0, tris[k + 1]); z1 = Math.max(z1, tris[k + 1]);
+  }
+  x0 -= PAD; x1 += PAD; z0 -= PAD; z1 += PAD;
+  const PX = 24;   // texels per metre
+  const w = Math.ceil((x1 - x0) * PX), h = Math.ceil((z1 - z0) * PX);
+  const cv = document.createElement('canvas');
+  cv.width = w;
+  cv.height = h;
+  const ctx = cv.getContext('2d', { willReadFrequently: true })!;
+  ctx.fillStyle = '#fff';
+  // one fill per triangle: as a single path, up- and down-facing triangles (opposite winding) would cancel into holes
+  for (let k = 0; k < tris.length; k += 6) {   // row 0 = front (-z), column 0 = -x
+    ctx.beginPath();
+    ctx.moveTo((tris[k] - x0) * PX, (tris[k + 1] - z0) * PX);
+    ctx.lineTo((tris[k + 2] - x0) * PX, (tris[k + 3] - z0) * PX);
+    ctx.lineTo((tris[k + 4] - x0) * PX, (tris[k + 5] - z0) * PX);
+    ctx.fill();
+  }
+  const img = ctx.getImageData(0, 0, w, h);
+  const mask = new Float32Array(w * h);
+  for (let k = 0; k < mask.length; k++) mask[k] = img.data[k * 4] / 255;
+  const tight = boxBlur(mask, w, h, 3), wide = boxBlur(mask, w, h, 11);
+  for (let k = 0; k < mask.length; k++) {
+    const a = Math.min(1, tight[k] * 0.8 + wide[k] * 0.35) * 255;   // alphaMap reads green: write it to all channels
+    img.data[k * 4] = img.data[k * 4 + 1] = img.data[k * 4 + 2] = a;
+    img.data[k * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(cv);
+  return { tex, cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, sx: x1 - x0, sz: z1 - z0 };
+}
+
+/** Three passes of a separable box blur (close to a gaussian), radius r texels. */
+function boxBlur(src: Float32Array, w: number, h: number, r: number) {
+  let a = Float32Array.from(src), b = new Float32Array(src.length);
+  const pass = (from: Float32Array, to: Float32Array, horizontal: boolean) => {
+    const n = horizontal ? w : h, lines = horizontal ? h : w;
+    for (let l = 0; l < lines; l++) {
+      const at = (i: number) => (horizontal ? l * w + i : i * w + l);
+      let sum = 0;
+      for (let i = -r; i <= r; i++) sum += from[at(Math.min(n - 1, Math.max(0, i)))];
+      for (let i = 0; i < n; i++) {
+        to[at(i)] = sum / (2 * r + 1);
+        sum += from[at(Math.min(n - 1, i + r + 1))] - from[at(Math.max(0, i - r))];
+      }
+    }
+  };
+  for (let k = 0; k < 3; k++) {
+    pass(a, b, true);
+    pass(b, a, false);
+  }
+  return a;
+}
 
 export function Car() {
   const { nodes } = useGLTF('/models/red_jeep_game.glb', DRACO);
@@ -47,27 +144,38 @@ export function Car() {
   const placed = useRef(false);
   const steer = useRef(0);
   const glow = useRef<THREE.Group>(null);
-  const blob = useRef<THREE.Mesh>(null);
+  const shadow = useRef<THREE.Mesh>(null);
   useKeyboardControls();
 
   const parts = useMemo(() => {
-    const shade = (o: THREE.Object3D) => {
-      const c = o.clone();
-      c.traverse((m) => {
-        m.castShadow = PRESET.shadows === 'directional';
-        m.receiveShadow = PRESET.shadows === 'directional';
-      });
-      return c;
-    };
     const wheels = WHEELS.map((n) => {
-      const w = shade(nodes[n]);
+      const w = nodes[n].clone();
       const hub = nodes[n].position.clone();
       w.position.set(0, 0, 0);
       return { obj: w, hub };
     });
-    const chassis = shade(nodes.car_body);
+    const chassis = nodes.car_body.clone();
     chassis.position.set(0, 0, 0);
-    return { chassis, wheels };
+    // toon-shade the car like the world (toonShading.ts): each PBR material -> Lambert of the same colour, shared
+    const toon = new Map<THREE.Material, THREE.MeshLambertMaterial>();
+    for (const root of [chassis, ...wheels.map((w) => w.obj)]) {
+      root.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh) return;
+        const swap = (src: THREE.Material) => {
+          if (!toon.has(src)) toon.set(src, new THREE.MeshLambertMaterial({ color: (src as THREE.MeshStandardMaterial).color }));
+          return toon.get(src)!;
+        };
+        m.material = Array.isArray(m.material) ? m.material.map(swap) : swap(m.material);
+      });
+    }
+    const shadowImg = makeCarShadow(chassis, wheels);
+    const shadowGeo = new THREE.PlaneGeometry(shadowImg.sx, shadowImg.sz).rotateX(-Math.PI / 2).translate(shadowImg.cx, 0, shadowImg.cz);
+    const shadowMat = new THREE.MeshBasicMaterial({
+      color: '#1c0a4a', alphaMap: shadowImg.tex, transparent: true, depthWrite: false, fog: false,   // violet, like the toon shade
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    });
+    return { chassis, wheels, shadowGeo, shadowMat };
   }, [nodes]);
 
   useEffect(() => {
@@ -76,14 +184,14 @@ export function Car() {
     v.indexUpAxis = 1;
     v.setIndexForwardAxis = 2;
     for (const { hub } of parts.wheels) {
-      v.addWheel({ x: hub.x, y: hub.y + REST, z: hub.z }, { x: 0, y: -1, z: 0 }, { x: -1, y: 0, z: 0 }, REST, RADIUS);
+      v.addWheel({ x: hub.x, y: SUSP_TOP, z: hub.z }, { x: 0, y: -1, z: 0 }, { x: -1, y: 0, z: 0 }, SUSP_TOP - hub.y, RADIUS);
     }
     for (let i = 0; i < parts.wheels.length; i++) {
       v.setWheelSuspensionStiffness(i, 30);
       v.setWheelSuspensionCompression(i, 4.4);
       v.setWheelSuspensionRelaxation(i, 2.6);
-      v.setWheelMaxSuspensionTravel(i, 0.4);
-      v.setWheelFrictionSlip(i, 3);
+      v.setWheelMaxSuspensionTravel(i, TRAVEL);
+      v.setWheelFrictionSlip(i, GRIP);
       v.setWheelSideFrictionStiffness(i, 1);
     }
     vehicle.current = v;
@@ -143,7 +251,7 @@ export function Car() {
   const terrainOnly = useMemo(() => (c: Collider) => c.shapeType() === rapier.ShapeType.TriMesh, [rapier]);
   const groundY = (x: number, y: number, z: number, maxDist = 200) => {
     groundRay.origin = { x, y, z };
-    // terrain only: tree trunks and rocks must not lift the camera or the blob shadow
+    // terrain only: tree trunks and rocks must not lift the camera or the shadow
     const hit = world.castRay(groundRay, maxDist, true, undefined, undefined, undefined, body.current ?? undefined, terrainOnly);
     return hit ? y - hit.timeOfImpact : null;
   };
@@ -176,13 +284,18 @@ export function Car() {
       place(p.x, p.z, Math.atan2(-V.a.x, -V.a.z));
       setControl('reset', false);
     }
-    const throttle = (k.fwd ? 1 : 0) - (k.back ? 1 : 0);
-    const target = ((k.left ? 1 : 0) - (k.right ? 1 : 0)) * MAX_STEER;
+    // keys are all-or-nothing; the touch drive stick is analog and simply adds on top
+    const throttle = THREE.MathUtils.clamp((k.fwd ? 1 : 0) - (k.back ? 1 : 0) + analog.throttle, -1, 1);
+    const target = THREE.MathUtils.clamp((k.left ? 1 : 0) - (k.right ? 1 : 0) + analog.steer, -1, 1) * MAX_STEER;
     steer.current += (target - steer.current) * 0.15;
     for (let i = 0; i < 4; i++) {
       v.setWheelEngineForce(i, -throttle * ENGINE);   // forward is -Z
       v.setWheelBrake(i, k.brake ? BRAKE : 0);
       v.setWheelSteering(i, i < 2 ? steer.current : 0);
+    }
+    for (let i = 0; i < 4; i++) {   // ice under a wheel = little grip
+      const cp = v.wheelIsInContact(i) ? v.wheelContactPoint(i) : null;
+      v.setWheelFrictionSlip(i, cp && groundColorAt(cp.x, cp.z, ICE_COL) && isIce(ICE_COL) ? ICE_GRIP : GRIP);
     }
     v.updateVehicle(w.timestep);
   });
@@ -199,7 +312,7 @@ export function Car() {
       const w = wheelRefs.current[i];
       if (!w) continue;
       const c = v.wheelChassisConnectionPointCs(i)!;
-      const len = v.wheelSuspensionLength(i) ?? REST;
+      const len = v.wheelSuspensionLength(i) ?? v.wheelSuspensionRestLength(i) ?? 0;
       w.position.set(c.x, c.y - len, c.z);
       w.rotation.set(v.wheelRotation(i) ?? 0, v.wheelSteering(i) ?? 0, 0, 'YXZ');
     }
@@ -219,7 +332,7 @@ export function Car() {
 
     // ---- smoke: exhaust always, more on throttle; dust from the rear wheels when moving fast on loose ground
     const acc = smokeAcc.current;
-    const throttle = controls.fwd || controls.back;
+    const throttle = controls.fwd || controls.back || Math.abs(analog.throttle) > 0.2;
     acc.exhaust += dt * (throttle ? 16 : 3);
     while (acc.exhaust >= 1) {
       acc.exhaust -= 1;
@@ -240,17 +353,46 @@ export function Car() {
       emitPuff(cp.x, cp.y + 0.25, cp.z, (Math.random() - 0.5) * 1.6, 0.6 + Math.random() * 0.8, (Math.random() - 0.5) * 1.6, 0.24, DUST, 1.2);
     }
 
-    // ---- headlight eyes glow at night; blob shadow on the low tier
+    // ---- headlight eyes glow at night
     if (glow.current) glow.current.visible = isNight();
-    if (blob.current) {
-      const gy = groundY(p.x, p.y + 1, p.z);
-      blob.current.visible = gy !== null;
-      if (gy !== null) blob.current.position.set(p.x, gy + 0.06, p.z);
+
+    // ---- fake shadow: fit a plane to the ground under the car (4 short terrain rays), lay the shadow image on it,
+    //      shift it away from the sun and fade it with daylight and with height (jumps)
+    const sh = shadow.current;
+    if (sh) {
+      const fx = fwd.x, fz = fwd.z, fl = Math.hypot(fx, fz) || 1;
+      const ux = fx / fl, uz = fz / fl;   // flat forward
+      const yf = groundY(p.x + ux * 1.8, p.y + 2, p.z + uz * 1.8, 8);
+      const yb = groundY(p.x - ux * 1.8, p.y + 2, p.z - uz * 1.8, 8);
+      const yl = groundY(p.x + uz * 1.1, p.y + 2, p.z - ux * 1.1, 8);
+      const yr = groundY(p.x - uz * 1.1, p.y + 2, p.z + ux * 1.1, 8);
+      sh.visible = yf !== null && yb !== null && yl !== null && yr !== null;
+      if (sh.visible) {
+        SH.f.set(ux * 1.8, yf!, uz * 1.8);
+        SH.b.set(-ux * 1.8, yb!, -uz * 1.8);
+        SH.l.set(uz * 1.1, yl!, -ux * 1.1);
+        SH.r.set(-uz * 1.1, yr!, ux * 1.1);
+        SH.n.crossVectors(SH.x.subVectors(SH.l, SH.r), SH.z.subVectors(SH.f, SH.b)).normalize();
+        if (SH.n.y < 0) SH.n.negate();
+        const gy = (yf! + yb! + yl! + yr!) / 4;
+        SH.z.set(-ux, 0, -uz).addScaledVector(SH.n, uz * SH.n.z + ux * SH.n.x).normalize();   // car back, in the plane
+        SH.x.crossVectors(SH.n, SH.z);
+        sh.quaternion.setFromRotationMatrix(SH.m.makeBasis(SH.x, SH.n, SH.z));
+        const lean = Math.min(0.9, 0.35 / Math.max(sun.y, 0.3));   // longer offset when the sun is low
+        sh.position.set(p.x - sun.x * lean, gy + 0.05, p.z - sun.z * lean);
+        const lift = p.y - gy;   // ~0 on the ground (car origin = wheel bottoms)
+        (sh.material as THREE.MeshBasicMaterial).opacity = 0.85 * sun.shadow * THREE.MathUtils.clamp(1 - (lift - 0.3) / 3, 0.15, 1);
+      }
     }
 
-    // ---- chase camera with mouse orbit + auto focus above 15 km/h
+    // ---- chase camera with mouse orbit (or the touch look stick) + auto focus above 15 km/h
     const o = orbit.current;
     const now = performance.now() / 1000;
+    if (analog.lookX || analog.lookY) {
+      o.yaw -= analog.lookX * 2.4 * dt;
+      o.pitch = THREE.MathUtils.clamp(o.pitch + analog.lookY * 1.4 * dt, 0.05, 1.25);
+      o.lastInput = now;
+    }
     if (kmh > AUTO_FOCUS_KMH && !o.dragging && now - o.lastInput > AUTO_FOCUS_IDLE) {
       o.yaw = Math.atan2(Math.sin(o.yaw), Math.cos(o.yaw));   // wrap, then ease back behind the car
       const k = 1 - Math.exp(-2.5 * dt);
@@ -280,22 +422,11 @@ export function Car() {
 
   const glowMat = useMemo(() => new THREE.MeshBasicMaterial({ color: '#fff3c4' }), []);
   const beamMat = useMemo(() => new THREE.MeshBasicMaterial({ color: '#fff1b8', transparent: true, opacity: 0.1, depthWrite: false, blending: THREE.AdditiveBlending }), []);
-  const blobTex = useMemo(() => {
-    const cv = document.createElement('canvas');
-    cv.width = cv.height = 64;
-    const ctx = cv.getContext('2d')!;
-    const g = ctx.createRadialGradient(32, 32, 4, 32, 32, 32);
-    g.addColorStop(0, 'rgba(0,0,0,0.55)');
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 64, 64);
-    return new THREE.CanvasTexture(cv);
-  }, []);
 
   return (
     <>
       <RigidBody ref={body} colliders={false} position={[SPAWN.x, 400, SPAWN.z]} canSleep={false} linearDamping={0.05} angularDamping={0.4} ccd>
-        <CuboidCollider args={[0.95, 0.45, 1.95]} position={[0, 1.5, 0]} mass={150} />
+        <CuboidCollider args={[0.95, 0.45, 1.95]} position={[0, 1.5, 0]} massProperties={MASS} />
         <primitive object={parts.chassis} />
         {parts.wheels.map((w, i) => (
           <group key={i} ref={(el) => { wheelRefs.current[i] = el; }}>
@@ -317,12 +448,7 @@ export function Car() {
           ))}
         </group>
       </RigidBody>
-      {PRESET.shadows === 'blob' && (
-        <mesh ref={blob} rotation-x={-Math.PI / 2}>
-          <planeGeometry args={[3.2, 5]} />
-          <meshBasicMaterial map={blobTex} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
-        </mesh>
-      )}
+      <mesh ref={shadow} geometry={parts.shadowGeo} material={parts.shadowMat} renderOrder={-1} frustumCulled={false} />
     </>
   );
 }

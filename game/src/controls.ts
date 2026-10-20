@@ -4,6 +4,10 @@ import { useEffect, useState } from 'react';
 export type Control = 'fwd' | 'back' | 'left' | 'right' | 'brake' | 'reset';
 export const controls: Record<Control, boolean> = { fwd: false, back: false, left: false, right: false, brake: false, reset: false };
 
+/** Analog input from the touch joysticks (0 when idle): drive stick and camera look stick, each axis -1..1.
+ *  steer > 0 = left, throttle > 0 = forward; lookX / lookY rotate the chase camera. */
+export const analog = { steer: 0, throttle: 0, lookX: 0, lookY: 0 };
+
 const listeners = new Set<() => void>();
 export function setControl(c: Control, on: boolean) {
   if (controls[c] === on) return;

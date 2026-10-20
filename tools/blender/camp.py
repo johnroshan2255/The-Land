@@ -238,6 +238,8 @@ CAMP = [
 if globals().get("MODE") == "preview":
     preview([b for _, b, _ in CAMP], globals().get("PREVIEW_PATH"), lod=int(globals().get("LOD", "0")), cols=6)
     result = {"preview": "written"}
+elif globals().get("MODE") == "library":   # only define the builders (island_chunks.py places them)
+    pass
 else:
     for name, build, lods in CAMP:
         make_asset("props", name, build, lods=lods)

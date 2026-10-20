@@ -1,0 +1,9 @@
+{
+  "name": "Island Drive",
+  "short_name": "Island Drive",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#e9dcc3",
+  "theme_color": "#1b1a18"
+}
