@@ -126,13 +126,14 @@ ROADS = [
     ("snow_north", "trail", [(60, 700), (-80, 860), (-220, 960), (-330, 1000), (-470, 960)]),
     ("coast_highway", "highway", [(-400, -200), (-560, -150), (-720, -110), (-880, -60), (-1050, -10), (-1110, 120), (-1080, 300),
                                   (-1020, 480), (-1010, 680), (-950, 880), (-800, 1040), (-640, 1030)]),
-    ("beach_trail", "trail", [(-400, -200), (-500, -280), (-570, -325)]),   # ends on the sand: the dock is at the shoreline
+    # beach trail: down to the dock on the sand, along the beach and back up to the coast highway
+    ("beach_trail", "trail", [(-400, -200), (-500, -280), (-570, -325), (-690, -312), (-800, -235), (-880, -60)]),
     ("bend_to_loop", "trail", [(690, -560), (580, -500), (470, -470), (390, -410)]),
     ("forest_west", "trail", [(140, -150), (20, -230), (-90, -350), (-200, -500)]),
     # access roads to the play areas
-    ("stunt_spur", "trail", [(600, 150), (500, 220), (470, 255)]),
+    ("stunt_spur", "trail", [(600, 150), (500, 215), (430, 222), (360, 215), (320, 170)]),   # past the stunt park gate
     ("snowpark_spur", "trail", [(-345, 700), (-318, 700), (-300, 700)]),
-    ("jump_spur", "trail", [(470, -470), (460, -560), (445, -603)]),
+    ("jump_spur", "trail", [(470, -470), (460, -560), (445, -603), (395, -590), (330, -555), (290, -460)]),   # past the canyon jump
     ("oval_spur", "trail", [(60, 700), (150, 800), (180, 872)]),
     ("eight_spur", "trail", [(420, 620), (400, 700), (345, 785)]),
     ("pump_spur", "trail", [(800, -40), (840, -100), (850, -122)]),
@@ -358,7 +359,10 @@ def switchback(a, b, legs=4, swing=55.0):
 
 
 ROADS.append(("summit_road", "trail", [tuple(q) for q in switchback(Vector((-345, 520)), SUMMIT, legs=6, swing=75.0)]))
-GRADED = {"summit_road"}   # heights climb evenly from start to end (a shelf cut into the slope) instead of following it
+# and down the far side to the coast highway, so the summit is a pass, not a dead end
+_top = switchback(Vector((-345, 520)), SUMMIT, legs=6, swing=75.0)[-1]
+ROADS.append(("summit_west", "trail", [tuple(q) for q in switchback(_top, Vector((-1015, 470)), legs=6, swing=70.0)]))
+GRADED = {"summit_road", "summit_west"}   # heights climb evenly from start to end (a shelf cut into the slope) instead of following it
 
 for _name, cls, ctrl in ROADS:
     kd, pts = samples_kd(roads)
@@ -371,7 +375,8 @@ for _name, cls, ctrl in ROADS:
             join[e] = pts[i][1]
     s = spline(ctrl, 4.0, False)
     if _name in GRADED:
-        h0, h1 = (join[0] if join[0] is not None else base_h(s[0].x, s[0].y)), base_h(s[-1].x, s[-1].y) - 1.0
+        h0 = join[0] if join[0] is not None else base_h(s[0].x, s[0].y) - 1.0
+        h1 = join[-1] if join[-1] is not None else base_h(s[-1].x, s[-1].y) - 1.0
         h = [lerp(h0, h1, i / (len(s) - 1)) for i in range(len(s))]
     else:
         h = limit_grade(smooth_along([max(2.0, base_h(p.x, p.y)) - 1.0 for p in s], 20, False), MAX_GRADE[cls])
@@ -720,7 +725,7 @@ def road_color(x, y, cls):
     snow, and on the coast asphalt (highways) or packed sand (trails). Blended by the same soft biome weights as the
     ground, so the colour changes gradually where a road crosses from one biome into the next."""
     w = weights(x, y, 45)
-    coast = C["asphalt"] if cls == "highway" else C["beach_track"]
+    coast = C["beach_track"]   # sandy road by the sea (both the highway and the trails)
     return C["dirt"] * w["forest"] + C["desert_track"] * w["desert"] + C["snow_track"] * w["snow"] + coast * w["beach"]
 
 

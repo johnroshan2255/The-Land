@@ -10,8 +10,9 @@ import { CuboidCollider, RigidBody, useBeforePhysicsStep, useRapier } from '@rea
 import type { Collider } from '@dimforge/rapier3d-compat';
 import { CHUNK, DRACO, HALF, PRESET, telemetry } from './state';
 import { sun } from './DayNight';
-import { Grass } from './Grass';
+import { Grass, grassMask } from './Grass';
 import { Leaves } from './Leaves';
+import { BRUNO_DYNAMIC, BRUNO_STATIC, DynamicProps, useBrunoProps } from './BrunoProps';
 import { noiseTexture } from './wind';
 import { BROADLEAF, TREES, TreeFoliage, solidTreeGeometry, solidTreeMaterial, useBrunoTrees } from './Trees';
 
@@ -62,21 +63,26 @@ terrainMaterial.onBeforeCompile = (shader) => {
     .replace('#include <color_fragment>', `#include <color_fragment>
       float highway = step(10.0, vRoad.x);
       float u = vRoad.x - 20.0 * highway, v = vRoad.y;
-      // stone slabs: (highway surface | plaza) x large noise patches
-      float paved = max(highway * (1.0 - smoothstep(0.85, 1.05, abs(u))), texture2D(uPlaza, vShadowUv).r);
+      // stone slabs on every road and plaza, coloured from the road's own (biome) colour: brown stone in the forest,
+      // red-brown in the desert, blue-grey in the snow, sand by the sea. Large noise patches break the paving into dirt.
+      float onRoad = 1.0 - smoothstep(0.85, 1.05, abs(u));
+      float plaza = texture2D(uPlaza, vShadowUv).r;
       float patches = smoothstep(0.38, 0.62, texture2D(uNoise, vWorldXZ * 0.0045).r);
-      float slab = paved * mix(0.35, 1.0, patches);
+      float slab = max(onRoad * mix(0.55, 1.0, patches), plaza * mix(0.35, 1.0, patches));
       if (slab > 0.01) {
         float tile = texture2D(uSlabs, vWorldXZ * ${SLAB_FREQ.toFixed(3)}).r;
-        vec3 slabColor = mix(vec3(0.392, 0.184, 0.122), vec3(1.0, 0.623, 0.258), tile);   // #a87762 .. #ffcf8b (linear)
+        // plazas: warm stone on grass (Bruno's slab colours), else the ground's own colour (snow, sand, desert)
+        bool green = diffuseColor.g > diffuseColor.r * 1.05 && diffuseColor.g > diffuseColor.b * 1.2;
+        vec3 roadCol = onRoad > 0.5 ? diffuseColor.rgb : (green ? vec3(0.392, 0.184, 0.122) * 1.6 : diffuseColor.rgb * 0.92);
+        vec3 slabColor = roadCol * mix(0.62, 1.45, tile) + vec3(0.03, 0.015, 0.0) * tile;   // grout dark, slab tops light
         diffuseColor.rgb = mix(diffuseColor.rgb, slabColor, slab);
       }
-      if (abs(u) < 1.0 && slab < 0.5) {
+      if (abs(u) < 1.0) {   // tyre ruts and worn edges on top of the paving
         float wob = 0.07 * sin(v * 0.31) + 0.03 * sin(v * 1.27);
         float rut = smoothstep(0.17, 0.02, abs(abs(u + wob) - 0.45));
         float edge = smoothstep(0.7, 1.0, abs(u));
         float chevron = sin(v * 1.6 - abs(u) * 5.0 + sin(v * 0.17) * 2.0);
-        diffuseColor.rgb *= 1.0 - 0.2 * rut - 0.14 * edge + 0.06 * chevron + 0.05 * (1.0 - abs(u));
+        diffuseColor.rgb *= 1.0 - 0.14 * rut - 0.12 * edge + 0.03 * chevron * (1.0 - slab) + 0.04 * (1.0 - abs(u));
       }`)
     .replace('#include <aomap_fragment>', `#include <aomap_fragment>
       toonDrop = (1.0 - texture2D(uPropShadow, vShadowUv + uShadowShift).r) * uShadowStrength;   // cast shadow -> shade tint`);
@@ -87,7 +93,8 @@ const SHADOW_DARKNESS: Record<string, number> = {
   pine: 0.85, pine_snow: 0.85, cactus: 0.5, rock: 0.6, rock_snow: 0.6, bush: 0.45, oak: 0.85, birch: 0.85, cherry: 0.85,
   boulder: 0.7, tent_orange: 0.55, tent_red: 0.55, tent_blue: 0.55, caravan: 0.6, campfire: 0.3,
   palm: 0.5, pillar: 0.6, rock_red: 0.6, log: 0.4, stump: 0.3, picnic_table: 0.35, arch: 0.6, stunt_loop: 0.45,
-  quarterpipe: 0.5, wave_ramp: 0.55, lift_station: 0.5, umbrella: 0.4, ice_block: 0.35,
+  quarterpipe: 0.5, wave_ramp: 0.55, lift_station: 0.5, umbrella: 0.4, ice_block: 0.35, cabin: 0.6, shack: 0.6,
+  water_tower: 0.45, igloo: 0.5, snowman: 0.4, dead_tree: 0.3, tire_stack: 0.4, b_lantern: 0.3, b_pole: 0.25,
   car_jeep: 0.6, car_buggy: 0.6, car_van: 0.6, car_hatch: 0.6,
 };
 
@@ -140,6 +147,35 @@ function bakePlazas(data: PropsFile) {
           for (let x = Math.max(0, Math.floor(cx - r)); x <= Math.min(size - 1, Math.ceil(cx + r)); x++) {
             const d = Math.hypot(x - cx, y - cy) / r;
             if (d < 1) px[y * size + x] = Math.max(px[y * size + x], 255 * Math.min(1, (1 - d) * 3));
+          }
+        }
+      }
+    }
+  }
+  const t = new THREE.DataTexture(px, size, size, THREE.RedFormat, THREE.UnsignedByteType);
+  t.magFilter = t.minFilter = THREE.LinearFilter;
+  t.needsUpdate = true;
+  return t;
+}
+
+/** Grass beds: a soft disc of grass around every tree, bush, rock and piece of furniture (radius in m at scale 1). */
+const GRASS_BED: Record<string, number> = {
+  pine: 4.5, pine_snow: 4.5, oak: 5, birch: 5, cherry: 5, bush: 3.5, rock: 2.6, boulder: 5.5, stump: 2.2, log: 2.6,
+  b_lantern: 2.6, b_bench: 3.2, b_pole: 2.2, picnic_table: 3, signpost: 2,
+};
+function bakeGrassBeds(data: PropsFile) {
+  const size = PRESET.tier === 'low' ? 1024 : 2048, perM = size / (2 * HALF);
+  const px = new Uint8Array(size * size);
+  for (const types of Object.values(data.placements)) {
+    for (const [type, radius] of Object.entries(GRASS_BED)) {
+      const arr = types[type];
+      if (!arr) continue;
+      for (let o = 0; o < arr.length; o += data.stride) {
+        const cx = (arr[o] + HALF) * perM, cy = (arr[o + 2] + HALF) * perM, r = radius * Math.min(arr[o + 4], 1.6) * perM;
+        for (let y = Math.max(0, Math.floor(cy - r)); y <= Math.min(size - 1, Math.ceil(cy + r)); y++) {
+          for (let x = Math.max(0, Math.floor(cx - r)); x <= Math.min(size - 1, Math.ceil(cx + r)); x++) {
+            const d = Math.hypot(x - cx, y - cy) / r;
+            if (d < 1) px[y * size + x] = Math.max(px[y * size + x], 255 * Math.min(1, (1 - d) * 2.2));
           }
         }
       }
@@ -213,6 +249,8 @@ const SOLID: Record<string, Solid> = {
   picnic_table: 'box', crate: 'box', car_jeep: 'box', car_buggy: 'box', car_van: 'box', car_hatch: 'box',
   stunt_loop: 'mesh', quarterpipe: 'mesh', wave_ramp: 'mesh', bridge: 'mesh', dock: 'mesh', gate: 'mesh',
   ramp_snow: 'hull', ramp_log: 'hull', ice_block: 'box', lift_station: 'box', lift_tower: 'trunk', arch: 'arch',
+  tire_stack: 'trunk', cabin: 'box', shack: 'box', water_tower: 'box', windmill: 'trunk', snowman: 'trunk', igloo: 'hull',
+  dead_tree: 'trunk', b_lantern: 'box', b_pole: 'box',
 };
 // rock_arch in island_chunks.py: pillars 3.2 x 3.4 x 10 m centred at x = +-6.5
 const ARCH_PILLAR = { x: 6.5, half: new THREE.Vector3(1.6, 5, 1.7) };
@@ -245,16 +283,20 @@ const LAYER_DIST: Record<string, number> = {
   bridge: PRESET.treeDistance, arch: PRESET.treeDistance, lift_tower: PRESET.treeDistance, lift_station: PRESET.treeDistance,
   gallery: PRESET.treeDistance, dock: PRESET.propDistance * 2, boat: PRESET.propDistance * 2, ramp_snow: PRESET.propDistance * 2.5,
   ramp_log: PRESET.propDistance * 2.5, umbrella: PRESET.propDistance * 1.4, towel: PRESET.propDistance, ice_block: PRESET.propDistance * 1.6,
+  tire_stack: PRESET.propDistance * 1.6, cabin: PRESET.treeDistance, shack: PRESET.treeDistance, water_tower: PRESET.treeDistance,
+  windmill: PRESET.treeDistance, snowman: PRESET.propDistance * 2, igloo: PRESET.propDistance * 2.5, dead_tree: PRESET.treeDistance,
+  b_lantern: PRESET.propDistance * 1.4, b_pole: PRESET.propDistance * 2,
 };
 
 export function World() {
   const lods = useGLTF(LOD_URLS, DRACO);
   const { nodes } = useGLTF(`${T}props.glb`, DRACO);
+  const brunoProps = useBrunoProps();
   // collider shapes of the box / hull props, from their models (unscaled, three.js axes)
   const shapes = useMemo(() => {
     const out: Record<string, PropShape> = {};
     for (const [type, kind] of Object.entries(SOLID)) {
-      const g = ((kind === 'mesh' ? nodes[`${type}_col`] : nodes[type]) as THREE.Mesh | undefined)?.geometry;
+      const g = brunoProps.geometries[type] ?? ((kind === 'mesh' ? nodes[`${type}_col`] : nodes[type]) as THREE.Mesh | undefined)?.geometry;
       if (!g || (kind !== 'box' && kind !== 'hull' && kind !== 'mesh')) continue;
       if (!g.boundingBox) g.computeBoundingBox();
       const b = g.boundingBox!;
@@ -265,7 +307,7 @@ export function World() {
       };
     }
     return out;
-  }, [nodes]);
+  }, [nodes, brunoProps]);
   const chunks = useMemo(() => {
     const out: { key: string; lod: THREE.LOD; lod0: THREE.Mesh }[] = [];
     const byName = lods.map((g) => {
@@ -344,7 +386,7 @@ function ColliderStreamer({ chunks, shapes }: { chunks: { key: string; lod0: THR
   const buildProps = (key: string) => {
     const cols: Collider[] = [];
     props.current.set(key, cols);
-    queue.current.push({ key, cols, types: Object.entries(PROPS!.placements[key] ?? {}).filter(([type]) => SOLID[type]), t: 0, o: 0 });
+    queue.current.push({ key, cols, types: Object.entries(PROPS!.placements[key] ?? {}).filter(([type, arr]) => SOLID[type] && arr.length), t: 0, o: 0 });
   };
   const drainQueue = () => {
     const stride = PROPS!.stride;
@@ -367,6 +409,7 @@ function ColliderStreamer({ chunks, shapes }: { chunks: { key: string; lod0: THR
       budget--;
       const s = arr[o + 4];
       let d;
+      try {
       if (kind === 'trunk') d = rapier.ColliderDesc.cylinder(1.6 * s, 0.35 * s).setTranslation(arr[o], arr[o + 1] + 1.6 * s, arr[o + 2]);
       else if (kind === 'rock') d = rapier.ColliderDesc.ball(0.95 * s).setTranslation(arr[o], arr[o + 1] + 0.25 * s, arr[o + 2]);
       else if (kind === 'arch') {
@@ -391,6 +434,10 @@ function ColliderStreamer({ chunks, shapes }: { chunks: { key: string; lod0: THR
           if (!d) continue;
         }
         d.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w });
+      }
+      } catch (err) {   // a model without a usable shape: skip it rather than leave the physics world in a bad state
+        if (import.meta.env.DEV) console.warn('collider skipped:', type, kind, shape?.center, shape?.half, (err as Error).message);
+        continue;
       }
       job.cols.push(world.createCollider(d.setFriction(0.6)));
     }
@@ -456,6 +503,7 @@ function ColliderStreamer({ chunks, shapes }: { chunks: { key: string; lod0: THR
 function Props() {
   const { nodes } = useGLTF(`${T}props.glb`, DRACO);
   const bruno = useBrunoTrees();
+  const brunoProps = useBrunoProps();
   const [placed, setPlaced] = useState<PropsFile | null>(null);
   // trees (TREES in Trees.tsx) are built here instead of taken from props.glb: solid near + far versions per type
   const trees = useMemo(() => Object.fromEntries(Object.keys(TREES).map((type) => [type, {
@@ -487,6 +535,8 @@ function Props() {
       propShadow.value = bakePropShadows(data, footprint, PRESET.shadowTexSize);
       plazaMask.value.dispose();
       plazaMask.value = bakePlazas(data);
+      grassMask.value.dispose();
+      grassMask.value = bakeGrassBeds(data);
       setPlaced(data);
       const m = new THREE.Matrix4();
       const q = new THREE.Quaternion();
@@ -498,12 +548,14 @@ function Props() {
         const cx = -HALF + (i + 0.5) * CHUNK;
         const cz = -(-HALF + (j + 0.5) * CHUNK);
         for (const [type, arr] of Object.entries(types)) {
+          if (BRUNO_DYNAMIC[type]) continue;   // drawn + simulated by DynamicProps
           const tree = trees[type];
-          const src = tree ? null : (nodes[type] as THREE.Mesh | undefined);
-          if (!tree && !src) continue;
+          const brunoGeo = BRUNO_STATIC.has(type) ? brunoProps.geometries[type] : undefined;
+          const src = tree || brunoGeo ? null : (nodes[type] as THREE.Mesh | undefined);
+          if (!tree && !brunoGeo && !src) continue;
           const n = arr.length / data.stride;
           if (!n) continue;
-          const material = tree ? tree.material : data.clay?.includes(type) ? clayMaterial : flatMaterial;
+          const material = tree ? tree.material : brunoGeo ? brunoProps.material : data.clay?.includes(type) ? clayMaterial : flatMaterial;
           const instanced = (geometry: THREE.BufferGeometry) => {
             const im = new THREE.InstancedMesh(geometry, material, n);
             im.position.set(cx, 0, cz);
@@ -523,7 +575,7 @@ function Props() {
           };
           const farGeo = tree ? tree.far : (nodes[`${type}_far`] as THREE.Mesh | undefined)?.geometry;
           const reach = (LAYER_DIST[type] ?? 150) + CHUNK * 0.71;   // compare against the chunk centre
-          groups.current.push({ obj: instanced(tree ? tree.near : src!.geometry), far: farGeo && instanced(farGeo), maxSq: reach * reach });
+          groups.current.push({ obj: instanced(tree ? tree.near : brunoGeo ?? src!.geometry), far: farGeo && instanced(farGeo), maxSq: reach * reach });
         }
       }
     });
@@ -538,7 +590,7 @@ function Props() {
       groups.current = [];
       root.clear();
     };
-  }, [nodes, scene, root, trees]);
+  }, [nodes, scene, root, trees, brunoProps]);
 
   // per-layer distance culling every 4th frame
   const frame = useRef(0);
@@ -561,7 +613,12 @@ function Props() {
       } else g.obj.visible = shown;
     }
   });
-  return <TreeFoliage placements={placed?.placements ?? null} stride={placed?.stride ?? 5} />;
+  return (
+    <>
+      <TreeFoliage placements={placed?.placements ?? null} stride={placed?.stride ?? 5} />
+      <DynamicProps placements={placed?.placements ?? null} stride={placed?.stride ?? 5} />
+    </>
+  );
 }
 
 /** Sea level plane (covers the sea, the river gorge) with gentle vertex waves on medium+ tiers. */

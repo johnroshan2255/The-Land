@@ -49,7 +49,7 @@ def relief(x, y, z):
 # of these look cooler/greyer here than on screen. (The master mesh keeps the original spec palette.)
 THEME = {"snow": "#F3F6FF", "ice": "#8FE3EA", "terracotta": "#D9733F", "desert_sand": "#F0BE74", "beach": "#F3D597",
          "forest": "#94B45E", "cliff": "#A06C45", "asphalt": "#5B5E64", "dirt": "#9F6F55",
-         "snow_track": "#ADC6E4", "desert_track": "#B68460", "beach_track": "#CDA58E", "snow_rock": "#A7A3AC"}
+         "snow_track": "#ADC6E4", "desert_track": "#B68460", "beach_track": "#E6C68E", "snow_rock": "#A7A3AC"}
 GRASS_DARK, GRASS_LIGHT = lin("#76A048"), lin("#B2CC6C")   # meadow patches, fresh green like refs 02-04
 SHALLOW, DEEP = lin("#EED49A"), lin("#2BA6B5")
 
@@ -327,7 +327,7 @@ BOULDER_TRIS = 300
 OBSTACLES = {   # prop type -> (builder function, LOD, extra builder args)
     "tent_orange": ("tent_orange", 1, {}), "tent_red": ("tent_red", 1, {}), "tent_blue": ("tent_blue", 1, {}),
     "campfire": ("campfire", 1, {}), "caravan": ("caravan_trailer", 1, {}), "lamp_post": ("lamp_post", 1, {}),
-    "flag": ("flag_rainbow", 1, {}), "fence": ("fence_wood", 1, {}), "ramp": ("ramp_kicker", 1, {}),
+    "flag": ("flag_rainbow", 1, {}), "fence": ("fence_wood", 1, {}), "ramp": ("ramp_wood", 0, {}),
     "picnic_table": ("picnic_table", 0, {}), "camp_chair": ("camp_chair", 0, {}), "crate": ("wooden_crate", 1, {}),
     "barrel": ("barrel", 1, {}), "signpost": ("signpost", 1, {}),
     "palm": ("tree_palm", 1, {}), "log": ("log", 0, {}), "stump": ("stump", 0, {}),
@@ -339,11 +339,149 @@ OBSTACLES = {   # prop type -> (builder function, LOD, extra builder args)
     "lift_tower": ("ski_lift_tower", 1, {}), "gondola": ("gondola_cabin", 1, {}), "ice_block": ("ice_block", 0, {}),
     "ramp_snow": ("ramp_snow", 1, {}), "ramp_log": ("ramp_log", 1, {}), "arch": ("rock_arch", 1, {}),
     "lift_station": ("lift_station", 1, {}), "gallery": ("snow_gallery", 1, {}),
+    # desert + snow set dressing (refs 02/04/05/08/09)
+    "tire_stack": ("tire_stack", 1, {}), "cabin": ("cabin_log", 1, {}), "shack": ("shack_desert", 1, {}),
+    "water_tower": ("water_tower", 1, {}), "windmill": ("windmill", 1, {}), "snowman": ("snowman", 1, {}),
+    "igloo": ("igloo", 1, {}), "dead_tree": ("dead_tree", 1, {}),
     # parked cars (refs 02-09 show them at every camp): LOD1 body + wheels merged into one mesh
     "car_jeep": ("car_jeep_open", 1, {"color": "blue"}), "car_buggy": ("car_buggy", 1, {}),
     "car_van": ("car_van", 1, {}), "car_hatch": ("car_hatch", 1, {}),
 }
 CARS = ["car_jeep", "car_buggy", "car_van", "car_hatch"]
+
+
+def ramp_wood(lod):
+    """Wooden kicker like the refs' orange ramps: plank deck in two wood tones on a dark frame, side boards, posts
+    under the lip and a red / white striped lip. 4.4 m wide, 7 m long, 2.2 m lip; run-up toward -Y."""
+    p = Part()
+    L, H, W = 7.0, 2.2, 4.4
+    prof = kicker_profile(seg_for(lod, 10, 6, 4), L, H)
+    p.prism("wood_dark", prof, W - 0.3)
+    n = 14 if lod == 0 else 8
+    for k in range(n):
+        t = (k + 0.5) / n
+        y, z = -L / 2 + L * t, H * t * t
+        a = math.degrees(math.atan(2 * H * t / L))
+        p.box("ramp_orange" if k % 2 else "wood_light", (W, L / n * 1.02, 0.14), loc=(0, y, z + 0.05), rot=(a, 0, 0))
+    a1 = math.degrees(math.atan(2 * H / L))
+    for k in range(6):   # striped lip
+        p.box("flag_red" if k % 2 else "white", (W / 6, 0.35, 0.16), loc=(-W / 2 + W / 6 * (k + 0.5), L / 2 - 0.2, H + 0.08), rot=(a1, 0, 0))
+    for sx in (1, -1):
+        p.prism("ramp_dark", [(y, z + 0.25) for y, z in prof[1:-1]] + [(L / 2, 0.0), (-L / 2, 0.0)], 0.16, loc=(sx * (W / 2 + 0.06), 0, 0))
+        p.box("wood_dark", (0.3, 0.3, H), loc=(sx * (W / 2 - 0.3), L / 2 - 0.2, H / 2))
+    return p.finish("ramp_wood")
+
+
+def tire_stack(lod):
+    """Three stacked tyres: race-track barrier (refs 02/04)."""
+    p = Part()
+    for k in range(3):
+        p.cyl("tire", 0.55, 0.34, seg_for(lod, 12, 8, 6), loc=(0, 0, 0.17 + 0.35 * k))
+        p.cyl("black", 0.26, 0.36, 8, loc=(0, 0, 0.17 + 0.35 * k))
+    return p.finish("tire_stack")
+
+
+def cabin_log(lod):
+    """Snowy log cabin (refs 05/08): log walls, snow-laden roof, warm windows, chimney."""
+    p = Part()
+    W, D, H = 6.0, 5.0, 2.6
+    p.box("wood", (W - 0.3, D - 0.3, H), loc=(0, 0, H / 2))
+    for k, z in enumerate([0.22 + 0.42 * i for i in range(6)]):
+        c = "trunk" if k % 2 else "wood"
+        for sy in (1, -1):
+            p.cyl(c, 0.22, W + 0.5, 6, loc=(0, sy * D / 2, z), rot=(0, 90, 0))
+        for sx in (1, -1):
+            p.cyl(c, 0.22, D + 0.5, 6, loc=(sx * W / 2, 0, z), rot=(90, 0, 0))
+    p.prism("wood_dark", [(-D / 2 - 0.6, H), (D / 2 + 0.6, H), (0, H + 2.0)], W + 0.8)
+    p.prism("snow", [(-D / 2 - 0.7, H + 0.18), (D / 2 + 0.7, H + 0.18), (0, H + 2.25)], W + 1.0)
+    p.box("wood_dark", (1.0, 0.14, 1.9), loc=(0, -D / 2 - 0.2, 0.95))
+    for sx in (1, -1):
+        p.box("lamp_glow", (0.9, 0.12, 0.7), loc=(sx * 1.8, -D / 2 - 0.2, 1.5))
+    p.box("rock_dark", (0.7, 0.7, 1.8), loc=(1.6, 0.8, H + 1.4))
+    p.box("snow", (0.8, 0.8, 0.2), loc=(1.6, 0.8, H + 2.35))
+    return p.finish("cabin_log")
+
+
+def shack_desert(lod):
+    """Wooden desert shack with a tin roof and porch (refs 02/04/09)."""
+    p = Part()
+    p.box("wood_light", (5.0, 4.0, 2.8), loc=(0, 0, 1.4))
+    p.box("metal", (5.8, 5.4, 0.15), loc=(0, -0.3, 3.05), rot=(-8, 0, 0))
+    p.box("wood_dark", (1.0, 0.14, 2.0), loc=(0, -2.05, 1.0))
+    p.box("glass_blue", (0.9, 0.12, 0.7), loc=(-1.6, -2.05, 1.7))
+    p.box("wood", (5.0, 1.4, 0.15), loc=(0, -2.7, 0.15))
+    for sx in (-2.3, 2.3):
+        p.box("wood_dark", (0.18, 0.18, 2.6), loc=(sx, -3.3, 1.35))
+    p.box("crate", (2.4, 0.12, 0.5), loc=(0, -2.1, 2.55))
+    return p.finish("shack_desert")
+
+
+def water_tower(lod):
+    """Wooden water tower on four legs (refs 02/09)."""
+    p = Part()
+    for sx in (1, -1):
+        for sy in (1, -1):
+            p.box("wood_dark", (0.3, 0.3, 6.2), loc=(sx * 1.4, sy * 1.4, 3.1), rot=(sy * 4, -sx * 4, 0))
+    p.box("wood_dark", (3.4, 0.2, 0.2), loc=(0, 1.3, 3.0))
+    p.box("wood_dark", (3.4, 0.2, 0.2), loc=(0, -1.3, 3.0))
+    p.cyl("wood", 1.7, 2.6, seg_for(lod, 12, 10, 8), loc=(0, 0, 7.4))
+    for z in (6.5, 8.3):
+        p.cyl("metal_dark", 1.73, 0.12, seg_for(lod, 12, 10, 8), loc=(0, 0, z))
+    p.cone("red_rock_dark", 1.95, 1.3, seg_for(lod, 12, 10, 8), loc=(0, 0, 9.35))
+    return p.finish("water_tower")
+
+
+def windmill(lod):
+    """Farm windmill: lattice tower, fan of blades, tail vane (refs 04/09)."""
+    p = Part()
+    for sx in (1, -1):
+        for sy in (1, -1):
+            p.box("metal_dark", (0.16, 0.16, 9.0), loc=(sx * 0.7, sy * 0.7, 4.5), rot=(sy * 4.5, -sx * 4.5, 0))
+    p.box("metal_dark", (0.5, 1.2, 0.5), loc=(0, 0.2, 9.1))
+    n = 12 if lod == 0 else 8
+    for k in range(n):
+        a = 360 * k / n
+        ar = math.radians(a)
+        p.box("white" if k % 2 else "flag_red", (0.35, 0.05, 1.7), loc=(math.sin(ar) * 1.05, -0.45, 9.1 + math.cos(ar) * 1.05), rot=(0, a, 0))
+    p.box("metal_dark", (0.1, 2.2, 0.1), loc=(0, 1.3, 9.1))
+    p.box("flag_red", (0.05, 1.0, 0.8), loc=(0, 2.4, 9.2))
+    return p.finish("windmill")
+
+
+def snowman(lod):
+    """Snowman with a top hat, carrot nose and red scarf (refs 05/08)."""
+    p = Part()
+    for r, z in ((0.9, 0.75), (0.65, 1.95), (0.46, 2.85)):
+        p.ico("snow", r, 1, loc=(0, 0, z))
+    p.cyl("black", 0.36, 0.06, 8, loc=(0, 0, 3.27))
+    p.cyl("black", 0.26, 0.5, 8, loc=(0, 0, 3.52))
+    p.cone("fire_orange", 0.09, 0.45, 6, loc=(0, -0.62, 2.88), rot=(90, 0, 0))
+    for sx in (1, -1):
+        p.ico("black", 0.06, 0, loc=(sx * 0.17, -0.41, 3.0))
+    p.cyl("flag_red", 0.5, 0.18, 10, loc=(0, 0, 2.45))
+    p.box("flag_red", (0.16, 0.08, 0.6), loc=(0.3, -0.45, 2.2))
+    for sx in (1, -1):
+        p.cyl("trunk", 0.04, 1.0, 4, loc=(sx * 0.95, 0, 2.15), rot=(0, sx * 60, 0))
+    return p.finish("snowman")
+
+
+def igloo(lod):
+    """Igloo dome with an entrance tunnel (ref 05)."""
+    p = Part()
+    p.ico("white", 2.4, 2 if lod == 0 else 1, loc=(0, 0, 0), scale=(1, 1, 0.8))
+    p.cyl("snow_shade", 0.75, 1.6, 10, loc=(0, -2.4, 0.55), rot=(90, 0, 0), scale=(1, 0.9, 1))
+    p.cyl("ice_dark", 0.5, 1.62, 8, loc=(0, -2.4, 0.5), rot=(90, 0, 0))
+    return p.finish("igloo")
+
+
+def dead_tree(lod):
+    """Bare desert tree (refs 04/09)."""
+    p = Part()
+    p.cyl("wood_dark", 0.25, 3.2, 6, loc=(0, 0, 1.6), r2=0.14)
+    for k, (a, tilt, z, ln) in enumerate(((0, 45, 2.4, 1.6), (140, 50, 2.9, 1.3), (250, 40, 2.0, 1.2), (60, 30, 3.1, 1.0))):
+        ar = math.radians(a)
+        p.cyl("wood_dark", 0.09, ln, 5, loc=(math.cos(ar) * ln * 0.35, math.sin(ar) * ln * 0.35, z + ln * 0.3), rot=(0, tilt, a))
+    return p.finish("dead_tree")
 
 
 def ramp_snow(lod):
@@ -495,7 +633,7 @@ def import_boulder(path, size=5.0):
 
 TERRAIN_C = C
 C = {k: hexcol(v) for k, v in PAL_HEX.items()}   # the builders paint by lib.py colour names; island_master.py reused C
-FACETED = {"palm", "log", "stump", "pillar", "rock_red", "ice_block", "arch"}
+FACETED = {"palm", "log", "stump", "pillar", "rock_red", "ice_block", "arch", "dead_tree"}
 prop_objs += [build_obstacle(n, spec, clay=n not in FACETED) for n, spec in OBSTACLES.items()]
 # exact drivable collision shapes for the curved / hollow structures (never drawn: they have no placements)
 COL_SHAPES = {"stunt_loop_col": "stunt_loop_col", "quarterpipe_col": "ramp_quarterpipe_col", "wave_ramp_col": "ramp_wave_big_col",
@@ -506,6 +644,7 @@ for n, b in COL_SHAPES.items():
 C = TERRAIN_C
 prop_objs.append(import_boulder(f"{SRC_DIR}/boulder_cluster_hunyuan.glb"))
 PROP_TYPES += list(OBSTACLES) + ["boulder"] + list(COL_SHAPES)
+PROP_TYPES += ["b_lantern", "b_pole", "b_bench", "b_crate", "b_brick", "b_fence"]   # Bruno's models (models/bruno, loaded in game)
 # far versions of the pines (one or two cones, ~10-20 triangles): the game swaps whole chunks to them past ~120 m
 prop_objs += [build_prop("pine_far"), build_prop("pine_snow_far")]
 PROP_TYPES += ["pine_far", "pine_snow_far"]
@@ -600,12 +739,12 @@ def to_coast(pt, level):
 
 
 # beach (refs 06/07): dock at the end of the beach trail, a wave-slide ramp beside it, umbrellas along the sand
-_bt = road_samples("beach_trail")[-1]
+_bt = min(road_samples("beach_trail"), key=lambda q: coast_val(q.x, q.y))   # the trail's lowest point, on the sand
 DOCK = to_coast(_bt, 1.0)
 DOCK_DIR = sea_dir(DOCK)
 WAVE = to_coast(DOCK + Vector((-DOCK_DIR.y, DOCK_DIR.x)) * 45, 22.0)
 LIFT_TOP = SUMMIT + (LIFT_BASE - SUMMIT).normalized() * 16
-CANYON_JUMP = road_samples("jump_spur")[-1]
+CANYON_JUMP = min(road_samples("jump_spur"), key=lambda q: river_kd.find((q.x, q.y, 0))[2])   # closest to the canyon
 _, _ji, _ = river_kd.find((CANYON_JUMP.x, CANYON_JUMP.y, 0))
 CANYON_PT = river_s[_ji]
 ARCHES = [Vector((950, 170)), Vector((250, 1120)), Vector((1120, 760))]
@@ -641,12 +780,14 @@ RULES = [   # (type, spacing m, keep probability, scale range, road margin m, te
     ("pine_snow", 8.5, 0.8, (1.0, 1.9), 1, lambda w, x, y, z, nz: w["snow"] > 0.55 and z < 260 and nz > 0.72 and clump(x, y) > 0.05),
     ("pine_snow", 32, 0.45, (1.0, 1.9), 1, lambda w, x, y, z, nz: w["snow"] > 0.55 and z < 260 and nz > 0.75 and clump(x, y) <= 0.05),
     ("rock", 28, 0.45, (0.5, 1.7), 3, lambda w, x, y, z, nz: w["snow"] < 0.4 and w["desert"] < 0.5 and nz > 0.6),
-    ("rock_red", 30, 0.5, (0.6, 1.6), 3, lambda w, x, y, z, nz: w["desert"] > 0.5 and nz > 0.6),
-    ("rock_snow", 22, 0.55, (0.5, 1.6), 3, lambda w, x, y, z, nz: w["snow"] > 0.5),
+    ("rock_red", 20, 0.5, (0.6, 1.8), 3, lambda w, x, y, z, nz: w["desert"] > 0.5 and nz > 0.6),
+    ("rock_snow", 17, 0.55, (0.5, 1.7), 3, lambda w, x, y, z, nz: w["snow"] > 0.5),
+    ("ice_block", 40, 0.4, (0.7, 1.4), 3, lambda w, x, y, z, nz: w["snow"] > 0.6 and nz > 0.85),
     ("bush", 10, 0.5, (0.7, 1.4), 1, lambda w, x, y, z, nz: (w["forest"] + 0.5 * w["beach"]) > 0.5 and nz > 0.8 and z > 3),
     ("grass_tuft", 5.5, 0.5, (0.8, 1.5), 0, lambda w, x, y, z, nz: (w["forest"] + 0.6 * w["beach"]) > 0.45 and nz > 0.85 and z > 2),
-    ("cactus", 22, 0.5, (0.8, 1.4), 3, lambda w, x, y, z, nz: w["desert"] > 0.6 and nz > 0.85 and mesa_t(x, y) < 0.2),
-    ("pillar", 85, 0.5, (0.5, 0.9), 8, lambda w, x, y, z, nz: w["desert"] > 0.7 and nz > 0.85 and mesa_t(x, y) < 0.3),
+    ("cactus", 14, 0.5, (0.8, 1.5), 3, lambda w, x, y, z, nz: w["desert"] > 0.6 and nz > 0.85 and mesa_t(x, y) < 0.2),
+    ("pillar", 55, 0.5, (0.5, 1.0), 8, lambda w, x, y, z, nz: w["desert"] > 0.7 and nz > 0.85 and mesa_t(x, y) < 0.3),
+    ("dead_tree", 55, 0.45, (0.8, 1.3), 4, lambda w, x, y, z, nz: w["desert"] > 0.6 and nz > 0.85 and mesa_t(x, y) < 0.2),
     ("palm", 30, 0.55, (0.9, 1.3), 3, lambda w, x, y, z, nz: w["beach"] > 0.6 and 15 < coast_val(x, y) < 260 and nz > 0.85),
     ("log", 40, 0.5, (0.8, 1.2), 3, lambda w, x, y, z, nz: w["forest"] > 0.6 and nz > 0.85),
     ("stump", 34, 0.5, (0.8, 1.3), 2, lambda w, x, y, z, nz: w["forest"] > 0.6 and nz > 0.85),
@@ -791,7 +932,7 @@ def pad_centre(name):
 
 # stunt park: gate at the entrance, loop straight ahead, quarter-pipes on both sides, a kicker line, flags, fence
 C0, R0 = pad_centre("stunt_park")
-entry = road_samples("stunt_spur")[-1]
+entry = min(road_samples("stunt_spur"), key=lambda q: (q - C0).length)   # where the road passes the park
 din = (C0 - entry).normalized()
 side = Vector((-din.y, din.x))
 put("gate", entry + din * 3, facing(Vector((0, 0)), din))
@@ -915,6 +1056,169 @@ for k in range(9):
 for q in ARCHES:
     put("arch", q, rngb.uniform(0, 6.28))
     put("pillar", q + Vector((14, 6)), rngb.uniform(0, 6.28), 0.8)
+
+# ------------------------------------------------------------------ set dressing in the refs' places, Bruno's density
+def flat_spot(centre, rmin, rmax, clear=12.0):
+    """Flattest dry, off-road point between rmin and rmax from centre (24 directions x 3 radii)."""
+    best, best_q = None, None
+    for k in range(24):
+        a = 2 * math.pi * k / 24
+        for r in (rmin, (rmin + rmax) / 2, rmax):
+            q = centre + Vector((math.cos(a), math.sin(a))) * r
+            z, nz = surface(q.x, q.y)
+            if z is None or z < 2 or in_canyon(q.x, q.y, 20) or mesa_t(q.x, q.y) > 0.1:
+                continue
+            d, w = road_info(q.x, q.y)
+            if d < w + clear or (pad_at(q.x, q.y) or (0, 0, 1e9, 1e9))[3] < 60:
+                continue
+            score = sum(surface(q.x + dx, q.y + dy)[1] for dx, dy in ((0, 0), (10, 0), (-10, 0), (0, 10), (0, -10)))
+            if best is None or score > best:
+                best, best_q = score, q
+    return best_q
+
+
+def at(c, dx, dy):
+    return c + Vector((dx, dy))
+
+
+def stack(name, base, yaw, layers, size, gap=0.05):
+    """Pyramid of boxes (Bruno's crate stacks): layers[k] boxes in row k, each `size` m, along the yaw direction."""
+    z0, _ = surface(base.x, base.y)
+    if z0 is None:
+        return
+    d = Vector((math.cos(yaw), math.sin(yaw)))
+    for k, n in enumerate(layers):
+        for i in range(n):
+            q = base + d * ((i - (n - 1) / 2) * (size + gap))
+            put(name, q, yaw, z=z0 + k * (size + gap))
+
+
+def wall(name, base, yaw, rows, per_row, length, height):
+    """Running-bond wall of bricks along the yaw direction (Bruno's brick walls)."""
+    z0, _ = surface(base.x, base.y)
+    if z0 is None:
+        return
+    d = Vector((math.cos(yaw), math.sin(yaw)))
+    for r in range(rows):
+        for i in range(per_row - (r % 2)):
+            q = base + d * ((i - (per_row - 1) / 2 + 0.5 * (r % 2)) * length)
+            put(name, q, yaw + math.pi / 2, z=z0 + r * height)
+
+
+B_CRATE, B_BRICK = 1.6, 1.15   # Bruno crate (1.06 m) and brick height (0.76 m) at the game's x1.5
+
+# desert ranch beside the oasis (refs 02/04/09): shack, water tower, windmill, fenced yard, crates, cacti
+C_o, R_o = pad_centre("oasis")
+ranch = flat_spot(C_o, 70, 120)
+if ranch:
+    face = math.atan2((C_o - ranch).y, (C_o - ranch).x)
+    put("shack", ranch, facing(ranch, C_o))
+    put("water_tower", at(ranch, 10, 9), 0.4)
+    put("windmill", at(ranch, -11, 10), 1.0)
+    for k in range(10):   # fenced yard on the far side
+        a0, a1 = face + math.pi * (0.55 + 0.9 * k / 10), face + math.pi * (0.55 + 0.9 * (k + 1) / 10)
+        pa, pb = ranch + Vector((math.cos(a0), math.sin(a0))) * 20, ranch + Vector((math.cos(a1), math.sin(a1))) * 20
+        put("fence", pa, math.atan2((pb - pa).y, (pb - pa).x), sink=0.15)
+    stack("b_crate", at(ranch, 6, -7), face, (3, 2, 1), B_CRATE)
+    put("tire_stack", at(ranch, -6, -8), 0.0)
+    for k in range(5):
+        put("cactus", ranch + Vector((math.cos(k * 1.3), math.sin(k * 1.3))) * 26, k * 1.7, 1.2)
+
+# race tracks: tyre-stack barriers on the inside of every bend, crate pyramids in the infield
+for name in ("desert_oval", "desert_eight"):
+    smp = road_samples(name)
+    w = roads[road_names.index(name)][2]
+    nrm = normals(smp, True)
+    for k in range(3, len(smp), 5):
+        put("tire_stack", smp[k] + nrm[k] * (w + 3.5) * (1 if (k // 5) % 2 else -1), 0.0)
+    c = sum(smp, Vector((0, 0))) / len(smp)
+    stack("b_crate", c, 0.3, (4, 3, 2, 1), B_CRATE)
+    wall("b_brick", at(c, 0, 14), 0.0, 3, 6, 1.7, B_BRICK)
+outpost = flat_spot(sum(road_samples("desert_eight"), Vector((0, 0))) / len(road_samples("desert_eight")), 90, 130)
+if outpost:
+    put("shack", outpost, 2.0)
+    put("water_tower", at(outpost, -9, 7), 0.0)
+    stack("b_crate", at(outpost, 7, -6), 0.5, (2, 1), B_CRATE)
+
+# more wooden kickers (refs 02/04): desert tracks, the oval infield, beach dunes
+for road, metres in (("desert_edge", 250), ("desert_edge", 350), ("mesa_trail", 520), ("mesa_trail", 760), ("stunt_spur", 60),
+                     ("forest_to_desert", 900), ("coast_highway", 160)):
+    q, t, nn = road_frame(road, metres)
+    put("ramp", q + nn * 0.0, facing(Vector((0, 0)), t), sink=0.02)
+
+# snow village (refs 05/08): log cabins round a plaza with a campfire, snowmen, lanterns, crates, log piles
+lr = road_samples("lake_road")
+village = flat_spot(lr[len(lr) // 3], 45, 80)
+if village:
+    put("campfire", village, 0.0)
+    for k in range(3):
+        a = 2 * math.pi * k / 3 + 0.4
+        q = village + Vector((math.cos(a), math.sin(a))) * 16
+        put("cabin", q, facing(q, village))
+    for k in range(4):
+        a = 2 * math.pi * k / 4 + 1.2
+        put("b_lantern", village + Vector((math.cos(a), math.sin(a))) * 9, a)
+    for k, a in enumerate((2.0, 4.1)):
+        put("snowman", village + Vector((math.cos(a), math.sin(a))) * 11, a + math.pi)
+    stack("b_crate", at(village, -7, 13), 0.2, (2, 1), B_CRATE)
+    for k in range(3):
+        put("log", at(village, 12 + k * 0.6, -10), 0.3, 1.2)
+    put("flag", at(village, 0, -12), 0.0)
+# igloos + snowmen by the frozen ponds and in the snow park
+for name in ("pond_north", "pond_west"):
+    Cp, Rp = pad_centre(name)
+    for a in (0.8, 2.6):
+        q = Cp + Vector((math.cos(a), math.sin(a))) * (Rp + 14)
+        put("igloo", q, facing(q, Cp))
+    put("snowman", Cp + Vector((math.cos(4.4), math.sin(4.4))) * (Rp + 9), 1.0)
+C2s, R2s = pad_centre("snow_park")
+for a in (0.5, 3.6):
+    put("snowman", C2s + Vector((math.cos(a), math.sin(a))) * (R2s - 8), a + math.pi)
+
+# Bruno's street furniture along the paved roads: a lamp post every 48 m on alternating sides, a bench with a lantern
+# every 96 m
+for road in ("loop", "coast_highway"):
+    smp = road_samples(road)
+    w = roads[road_names.index(road)][2]
+    nrm = normals(smp, road == "loop")
+    for k in range(6, len(smp) - 6, 12):
+        sd = 1 if (k // 12) % 2 else -1
+        q = smp[k] + nrm[k] * sd * (w + 2.6)
+        put("b_pole", q, 0.0)
+        if (k // 12) % 2 == 0:
+            qb = smp[k + 3] + nrm[k + 3] * sd * (w + 3.4)
+            put("b_bench", qb, facing(qb, smp[k + 3]) + math.pi)
+            put("b_lantern", smp[k + 5] + nrm[k + 5] * sd * (w + 3.0), 0.0)
+# camps: a bench, two lanterns, a crate pyramid and a brick pile each
+for (c, p, t, out, kit, road, side) in camp_sites:
+    put("b_bench", c + out * 3.5 + t * 6, facing(c + out * 3.5 + t * 6, c) + math.pi)
+    for sd in (1, -1):
+        put("b_lantern", c + t * sd * 9 - out * 2, 0.0)
+    stack("b_crate", c - out * 9 + t * 3, math.atan2(t.y, t.x), (3, 2, 1), B_CRATE)
+    for k in range(4):
+        put("b_brick", c - out * 7 - t * (6 + k * 1.8), math.atan2(t.y, t.x) + 0.3 * k)
+# stunt park: crate pyramids and brick walls to smash through, lanterns
+C0s, R0s = pad_centre("stunt_park")
+for k, (dx, dy) in enumerate(((-22, -18), (20, -24), (0, 26))):
+    stack("b_crate", at(C0s, dx, dy), 0.5 * k, (4, 3, 2, 1), B_CRATE)
+for k, (dx, dy, a) in enumerate(((28, 8, 1.2), (-30, 6, 2.0))):
+    wall("b_brick", at(C0s, dx, dy), a, 3, 7, 1.7, B_BRICK)
+for pos, a in ring(C0s, R0s - 8, 6, 0.6):
+    put("b_lantern", pos, a)
+
+# clear the scattered nature out of the new set pieces (they were placed after the scatter)
+clear_zones = [(q, r) for q, r in ((ranch, 28), (outpost, 18), (village, 28)) if q is not None]
+for name in ("desert_oval", "desert_eight"):
+    clear_zones.append((sum(road_samples(name), Vector((0, 0))) / len(road_samples(name)), 20))
+SCATTER = {r[0] for r in RULES}
+for key, types in placed.items():
+    for t in SCATTER & set(types):
+        arr, keep = types[t], []
+        for o in range(0, len(arr), 5):
+            q = Vector((arr[o], -arr[o + 2]))
+            if not any((q - c).length < r for c, r in clear_zones):
+                keep += arr[o:o + 5]
+        types[t] = keep
 
 features = {"lift": lift_pts, "waterfalls": waterfalls}
 

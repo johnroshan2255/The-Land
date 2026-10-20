@@ -10,3 +10,4 @@ Used for the stylised look (ports of his MeshDefaultMaterial, Foliage, Floor sla
 | `foliageSDF.png` | `static/foliage/foliageSDF.png` | Leaf-cluster alpha shape for the foliage cards |
 | `palette.png` | `static/palette.png` | Colour palette the tree trunks are UV-mapped to |
 | `oakTreesVisual.glb`, `birchTreesVisual.glb`, `cherryTreesVisual.glb` | `static/*Trees/*TreesVisual.glb` | Trunk meshes + leaf-cluster positions |
+| `lanterns.glb`, `poleLights.glb`, `benches.glb`, `explosiveCrates.glb`, `fences.glb`, `bricks.glb` | `static/<name>/<name>.glb` | Street furniture and knockable props (first instance of each is used as the model) |

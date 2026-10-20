@@ -9,9 +9,15 @@ import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { PRESET, telemetry } from './state';
-import { updateWind, windGLSL, windUniforms } from './wind';
+import { noiseTexture, updateWind, windGLSL, windUniforms } from './wind';
 
-const TIERS = { low: { side: 110, half: 24 }, medium: { side: 170, half: 32 }, high: { side: 240, half: 40 } };
+/** Island-wide grass bed mask (R8, 2400 m square, north = -z at v 0), set by World once the placements are loaded. */
+export const grassMask = { value: new THREE.DataTexture(new Uint8Array([255]), 1, 1, THREE.RedFormat) as THREE.Texture };
+grassMask.value.needsUpdate = true;
+
+// Bruno grows grass only in beds; ours grows in clumps around trees, bushes, rocks and furniture (uGrassMask, baked
+// from the placements) plus some meadow patches (noise), so the blades are packed denser and taller than before.
+const TIERS = { low: { side: 150, half: 24 }, medium: { side: 220, half: 32 }, high: { side: 290, half: 40 } };
 const { side: SIDE, half: HALF_FIELD } = TIERS[PRESET.tier];
 const WIN = 160;          // ground capture window (m), re-captured when the car is RECAPTURE m from its centre
 const RECAPTURE = 30;
@@ -87,7 +93,7 @@ export function Grass({ chunks }: { chunks: { lod0: THREE.Mesh }[] }) {
 
   const uniforms = useMemo(() => {
     groundUniforms.uGround.value = rt.texture;
-    return { ...groundUniforms, ...windUniforms, uCenter: { value: new THREE.Vector2() }, uTime: { value: 0 } };
+    return { ...groundUniforms, ...windUniforms, uGrassMask: grassMask, uPatchNoise: { value: noiseTexture }, uCenter: { value: new THREE.Vector2() }, uTime: { value: 0 } };
   }, [rt]);
 
   const mesh = useMemo(() => {
@@ -97,7 +103,7 @@ export function Grass({ chunks }: { chunks: { lod0: THREE.Mesh }[] }) {
       s.vertexShader = s.vertexShader
         .replace('#include <common>', /* glsl */ `#include <common>
           ${groundGLSL} ${windGLSL}
-          uniform vec2 uCenter; uniform float uTime;
+          uniform vec2 uCenter; uniform float uTime; uniform sampler2D uGrassMask; uniform sampler2D uPatchNoise;
           attribute float rnd; varying float vTip; varying vec3 vTint;`)
         .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(0.0, 1.0, 0.0);')
         .replace('#include <begin_vertex>', /* glsl */ `
@@ -108,11 +114,14 @@ export function Grass({ chunks }: { chunks: { lod0: THREE.Mesh }[] }) {
           float ground = groundHeight(g);
           float patchN = sin(wp.x * 0.11 + sin(wp.y * 0.07) * 2.0) * sin(wp.y * 0.09 + 1.3) * 0.5 + 0.5;   // tall / short patches
           float fade = smoothstep(hf, hf * 0.6, length(loopPos));
-          float h = (0.75 - 0.3 * step(0.97, fract(rnd * 37.13))) * (0.45 + 0.55 * rnd) * (0.6 + 0.8 * patchN) * smoothstep(0.35, 0.8, g.b) * fade;
+          // grass beds: baked clumps (trees, bushes, rocks, furniture) + meadow patches; short at the bed edges
+          float bed = max(texture2D(uGrassMask, wp / 2400.0 + 0.5).r, smoothstep(0.56, 0.66, texture2D(uPatchNoise, wp * 0.006).r));
+          bed = smoothstep(0.15, 0.7, bed);
+          float h = (1.1 - 0.45 * step(0.97, fract(rnd * 37.13))) * (0.55 + 0.45 * rnd) * (0.75 + 0.5 * patchN) * bed * smoothstep(0.35, 0.8, g.b) * fade;
           float corner = position.y;
           float tip = step(corner, 0.5);
           vec2 dir = normalize(wp - cameraPosition.xz + 1e-4);
-          vec2 sideV = vec2(-dir.y, dir.x) * 0.11 * (corner < 1.5 ? 1.0 : -1.0) * (1.0 - tip) * step(0.001, h);
+          vec2 sideV = vec2(-dir.y, dir.x) * 0.14 * (corner < 1.5 ? 1.0 : -1.0) * (1.0 - tip) * step(0.001, h);
           vec2 wind = windOffset(wp) * tip * h * 2.0;   // Bruno: wind x tipness x height x 2
           vec3 transformed = vec3(wp.x + sideV.x + wind.x, ground + tip * h, wp.y + sideV.y + wind.y);
           vTip = tip;

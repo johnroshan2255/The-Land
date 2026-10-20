@@ -2,8 +2,8 @@
 // His runs as a WebGPU compute shader; phones on WebGL can't, so a few hundred leaves are simulated on the CPU instead
 // (same rules: the car's velocity and a sideways push fling leaves near it up and away, wind drifts them, damping is
 // high in the air, gravity pulls them down) and drawn as one instanced mesh. Their height above the ground is
-// simulated; the ground itself comes from the grass ground capture in the vertex shader. They live on grass and dirt
-// (not on snow, sand or roads) and wrap around the car as it drives.
+// simulated; the ground itself comes from the grass ground capture in the vertex shader. They live on grass only (not
+// on snow or sand) and wrap around the car as it drives.
 import { useMemo } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
@@ -94,7 +94,7 @@ export function Leaves() {
       if (wz > HALF_FIELD) { pos[k + 2] -= 2 * HALF_FIELD; moved = true; } else if (wz < -HALF_FIELD) { pos[k + 2] += 2 * HALF_FIELD; moved = true; }
       if (moved || !checked[i]) {
         checked[i] = groundColorAt(pos[k], pos[k + 2], C) ? 1 : 0;
-        on[i] = checked[i] && (isGrass(C) || (C.r > C.b * 1.3 && C.r < 0.75)) ? 1 : 0;   // grass or dirt
+        on[i] = checked[i] && isGrass(C) ? 1 : 0;   // only on grass (where the trees are), not on sand or snow
         vel[k] = vel[k + 1] = vel[k + 2] = 0;
         pos[k + 1] = 0;
       }
